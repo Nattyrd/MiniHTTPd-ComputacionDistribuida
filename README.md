@@ -5,6 +5,7 @@ Servidor HTTP/1.1 basico desarrollado en C para Linux, sin bibliotecas HTTP exte
 ## Estado actual
 
 - Fase 1: servidor TCP funcional.
+<<<<<<< HEAD
 - Fase 2: primera solicitud HTTP.
   - Lee una solicitud HTTP completa por conexion.
   - Reconoce el metodo GET, la URI y la version HTTP/1.0 o HTTP/1.1.
@@ -13,6 +14,10 @@ Servidor HTTP/1.1 basico desarrollado en C para Linux, sin bibliotecas HTTP exte
   - Cierra la conexion despues de enviar la respuesta.
 - La atencion es secuencial: se procesa un cliente a la vez. La concurrencia con epoll se agregara en una fase posterior.
 - Todavia no se sirven archivos estaticos; eso corresponde a una fase posterior.
+=======
+- El servidor inicia, escucha un puerto, acepta un cliente y devuelve (eco) los datos recibidos.
+- La atencion es secuencial: se procesa un cliente a la vez. La concurrencia con epoll se agregara en una fase posterior.
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 
 ## Requisitos
 
@@ -40,6 +45,7 @@ Ejemplo:
 ./minihttpd 8080
 ```
 
+<<<<<<< HEAD
 ## Prueba HTTP
 
 En otra terminal, enviar una solicitud GET con curl:
@@ -63,6 +69,17 @@ printf 'POST / HTTP/1.1\r\nHost: localhost\r\n\r\n' | nc 127.0.0.1 8080
 ```
 
 La respuesta debe ser `405 Method Not Allowed` con el encabezado `Allow: GET`.
+=======
+## Prueba de comunicacion
+
+En otra terminal, conectarse al servidor:
+
+```sh
+nc 127.0.0.1 8080
+```
+
+Escribir cualquier texto y presionar Enter. El servidor debe devolver el mismo texto.
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 
 Tambien se puede comprobar que el puerto esta escuchando con:
 

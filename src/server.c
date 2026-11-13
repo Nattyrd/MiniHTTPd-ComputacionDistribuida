@@ -1,5 +1,8 @@
 #include "server.h"
+<<<<<<< HEAD
 #include "http.h"
+=======
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -8,16 +11,22 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+<<<<<<< HEAD
 #include <sys/time.h>
+=======
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 #include <unistd.h>
 
 static int create_listening_socket(uint16_t port);
 static void handle_client(int client_fd, const struct sockaddr_in *client_addr);
+<<<<<<< HEAD
 static int read_http_request(int fd, char *buffer, size_t capacity,
                              size_t *length);
 static const char *find_header_end(const char *data, size_t length);
 static void send_simple_response(int client_fd, http_status_t status);
 static void drain_client(int client_fd);
+=======
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 static int send_all(int fd, const char *data, size_t length);
 
 int server_run(uint16_t port)
@@ -108,6 +117,7 @@ static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
            (unsigned)ntohs(client_addr->sin_port));
     fflush(stdout);
 
+<<<<<<< HEAD
     char request_buffer[HTTP_MAX_REQUEST_SIZE + 1];
     size_t request_length = 0;
     int read_result = read_http_request(client_fd, request_buffer,
@@ -248,6 +258,9 @@ static void drain_client(int client_fd)
     timeout.tv_usec = 0;
     (void)setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO,
                      &timeout, sizeof(timeout));
+=======
+    char buffer[SERVER_BUFFER_SIZE];
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 
     for (;;) {
         ssize_t received = recv(client_fd, buffer, sizeof(buffer), 0);
@@ -261,9 +274,26 @@ static void drain_client(int client_fd)
                 continue;
             }
 
+<<<<<<< HEAD
             break;
         }
     }
+=======
+            perror("recv");
+            break;
+        }
+
+        if (send_all(client_fd, buffer, (size_t)received) < 0) {
+            perror("send");
+            break;
+        }
+    }
+
+    printf("Cliente desconectado: %s:%u\n",
+           client_ip,
+           (unsigned)ntohs(client_addr->sin_port));
+    fflush(stdout);
+>>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 }
 
 static int send_all(int fd, const char *data, size_t length)
