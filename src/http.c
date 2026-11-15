@@ -361,3 +361,34 @@ int http_build_response(char *buffer, size_t capacity,
 
     return written;
 }
+
+int http_build_file_response_header(char *buffer, size_t capacity,
+                                    http_status_t status,
+                                    const char *content_type,
+                                    size_t content_length)
+{
+    if (buffer == NULL || capacity == 0 || content_type == NULL) {
+        return -1;
+    }
+
+    const char *reason = http_reason_phrase(status);
+
+    int written = snprintf(
+        buffer, capacity,
+        "HTTP/1.1 %d %s\r\n"
+        "Server: MiniHTTPd\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        (int)status,
+        reason,
+        content_type,
+        content_length);
+
+    if (written < 0 || (size_t)written >= capacity) {
+        return -1;
+    }
+
+    return written;
+}

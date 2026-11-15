@@ -1,8 +1,6 @@
 #include "server.h"
-<<<<<<< HEAD
 #include "http.h"
-=======
->>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
+#include "files.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -11,22 +9,19 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
-<<<<<<< HEAD
 #include <sys/time.h>
-=======
->>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 #include <unistd.h>
 
 static int create_listening_socket(uint16_t port);
 static void handle_client(int client_fd, const struct sockaddr_in *client_addr);
-<<<<<<< HEAD
 static int read_http_request(int fd, char *buffer, size_t capacity,
                              size_t *length);
 static const char *find_header_end(const char *data, size_t length);
+static http_status_t serve_file(int client_fd,
+                                const http_request_t *request);
+static http_status_t file_result_to_status(files_result_t result);
 static void send_simple_response(int client_fd, http_status_t status);
 static void drain_client(int client_fd);
-=======
->>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 static int send_all(int fd, const char *data, size_t length);
 
 int server_run(uint16_t port)
@@ -117,7 +112,6 @@ static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
            (unsigned)ntohs(client_addr->sin_port));
     fflush(stdout);
 
-<<<<<<< HEAD
     char request_buffer[HTTP_MAX_REQUEST_SIZE + 1];
     size_t request_length = 0;
     int read_result = read_http_request(client_fd, request_buffer,
@@ -129,33 +123,16 @@ static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
         http_status_t status = http_parse_request(request_buffer,
                                                   request_length,
                                                   &request);
-        char response[HTTP_RESPONSE_BUFFER_SIZE];
-        int response_length = http_build_response(response,
-                                                  sizeof(response),
-                                                  &request,
-                                                  status);
-
-        if (response_length < 0) {
-            static const char fallback[] =
-                "HTTP/1.1 500 Internal Server Error\r\n"
-                "Content-Length: 0\r\n"
-                "Connection: close\r\n"
-                "\r\n";
-
-            (void)send_all(client_fd, fallback, sizeof(fallback) - 1);
-            status = HTTP_STATUS_INTERNAL_SERVER_ERROR;
-        } else if (send_all(client_fd, response,
-                            (size_t)response_length) < 0) {
-            perror("send");
-        }
 
         if (status == HTTP_STATUS_OK) {
+            status = serve_file(client_fd, &request);
             printf("Solicitud: %s %s %s -> %d\n",
                    request.method,
                    request.uri,
                    request.version,
                    (int)status);
         } else {
+            send_simple_response(client_fd, status);
             printf("Solicitud rechazada -> %d\n", (int)status);
         }
         fflush(stdout);
@@ -234,6 +211,85 @@ static const char *find_header_end(const char *data, size_t length)
     return NULL;
 }
 
+static http_status_t serve_file(int client_fd,
+                                const http_request_t *request)
+{
+    files_file_t file;
+    files_result_t result = files_open(request->uri, &file);
+
+    if (result != FILES_OK) {
+        http_status_t status = file_result_to_status(result);
+        send_simple_response(client_fd, status);
+        return status;
+    }
+
+    char header[HTTP_RESPONSE_BUFFER_SIZE];
+    int header_length = http_build_file_response_header(
+        header,
+        sizeof(header),
+        HTTP_STATUS_OK,
+        FILES_DEFAULT_CONTENT_TYPE,
+        file.size);
+
+    if (header_length < 0) {
+        files_close(&file);
+        send_simple_response(client_fd, HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        return HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    }
+
+    if (send_all(client_fd, header, (size_t)header_length) < 0) {
+        perror("send");
+        files_close(&file);
+        return HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    }
+
+    char buffer[4096];
+
+    for (;;) {
+        ssize_t received = files_read(&file, buffer, sizeof(buffer));
+
+        if (received == 0) {
+            break;
+        }
+
+        if (received < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("read");
+            files_close(&file);
+            return HTTP_STATUS_INTERNAL_SERVER_ERROR;
+        }
+
+        if (send_all(client_fd, buffer, (size_t)received) < 0) {
+            perror("send");
+            files_close(&file);
+            return HTTP_STATUS_INTERNAL_SERVER_ERROR;
+        }
+    }
+
+    files_close(&file);
+    return HTTP_STATUS_OK;
+}
+
+static http_status_t file_result_to_status(files_result_t result)
+{
+    switch (result) {
+        case FILES_OK:
+            return HTTP_STATUS_OK;
+        case FILES_NOT_FOUND:
+            return HTTP_STATUS_NOT_FOUND;
+        case FILES_FORBIDDEN:
+            return HTTP_STATUS_FORBIDDEN;
+        case FILES_BAD_REQUEST:
+            return HTTP_STATUS_BAD_REQUEST;
+        case FILES_ERROR:
+        default:
+            return HTTP_STATUS_INTERNAL_SERVER_ERROR;
+    }
+}
+
 static void send_simple_response(int client_fd, http_status_t status)
 {
     char response[HTTP_RESPONSE_BUFFER_SIZE];
@@ -258,9 +314,6 @@ static void drain_client(int client_fd)
     timeout.tv_usec = 0;
     (void)setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO,
                      &timeout, sizeof(timeout));
-=======
-    char buffer[SERVER_BUFFER_SIZE];
->>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 
     for (;;) {
         ssize_t received = recv(client_fd, buffer, sizeof(buffer), 0);
@@ -274,26 +327,9 @@ static void drain_client(int client_fd)
                 continue;
             }
 
-<<<<<<< HEAD
             break;
         }
     }
-=======
-            perror("recv");
-            break;
-        }
-
-        if (send_all(client_fd, buffer, (size_t)received) < 0) {
-            perror("send");
-            break;
-        }
-    }
-
-    printf("Cliente desconectado: %s:%u\n",
-           client_ip,
-           (unsigned)ntohs(client_addr->sin_port));
-    fflush(stdout);
->>>>>>> a8a0894e985f9836f587342e1b4d32a390d0b5ab
 }
 
 static int send_all(int fd, const char *data, size_t length)

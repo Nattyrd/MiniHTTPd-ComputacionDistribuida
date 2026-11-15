@@ -49,4 +49,14 @@ int http_build_response(char *buffer, size_t capacity,
                         const http_request_t *request,
                         http_status_t status);
 
+/*
+ * Genera solo las cabeceras de una respuesta con contenido binario.
+ * El contenido del archivo se envia despues de estas cabeceras.
+ * Retorna la cantidad de bytes generados o -1 si no cabe en el buffer.
+ */
+int http_build_file_response_header(char *buffer, size_t capacity,
+                                    http_status_t status,
+                                    const char *content_type,
+                                    size_t content_length);
+
 #endif
