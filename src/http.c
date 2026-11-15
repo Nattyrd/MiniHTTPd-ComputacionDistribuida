@@ -1,7 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "http.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static int is_token_char(unsigned char c);
 static int is_token(const char *data, size_t length);
@@ -13,6 +16,13 @@ static int header_name_equals(const char *name, size_t length,
 static int copy_header_value(char *dest, size_t dest_size,
                              const char *value, size_t value_length);
 static const char *http_reason_phrase(http_status_t status);
+static int http_format_date(time_t when, char *buffer, size_t capacity);
+static int http_build_head(char *buffer, size_t capacity,
+                           http_status_t status,
+                           const char *content_type,
+                           size_t content_length,
+                           time_t last_modified,
+                           const char *extra_headers);
 
 http_status_t http_parse_request(const char *data, size_t length,
                                  http_request_t *request)
@@ -129,6 +139,12 @@ http_status_t http_parse_request(const char *data, size_t length,
         } else if (header_name_equals(cursor, name_length, "User-Agent")) {
             if (copy_header_value(request->user_agent,
                                   sizeof(request->user_agent),
+                                  value, value_length) != 0) {
+                return HTTP_STATUS_BAD_REQUEST;
+            }
+        } else if (header_name_equals(cursor, name_length, "Connection")) {
+            if (copy_header_value(request->connection,
+                                  sizeof(request->connection),
                                   value, value_length) != 0) {
                 return HTTP_STATUS_BAD_REQUEST;
             }
@@ -299,61 +315,81 @@ static const char *http_reason_phrase(http_status_t status)
     }
 }
 
-int http_build_response(char *buffer, size_t capacity,
-                        const http_request_t *request,
-                        http_status_t status)
+static int http_format_date(time_t when, char *buffer, size_t capacity)
 {
+    struct tm value;
+
     if (buffer == NULL || capacity == 0) {
         return -1;
     }
 
-    const char *reason = http_reason_phrase(status);
-    char body[4096];
-    int body_length;
-
-    if (status == HTTP_STATUS_OK && request != NULL) {
-        body_length = snprintf(
-            body, sizeof(body),
-            "MiniHTTPd\n\n"
-            "Metodo: %s\n"
-            "URI: %s\n"
-            "Version: %s\n"
-            "Host: %s\n"
-            "User-Agent: %s\n",
-            request->method,
-            request->uri,
-            request->version,
-            request->host[0] != '\0' ? request->host : "(no enviado)",
-            request->user_agent[0] != '\0'
-                ? request->user_agent
-                : "(no enviado)");
-    } else {
-        body_length = snprintf(body, sizeof(body), "%d %s\n",
-                               (int)status, reason);
-    }
-
-    if (body_length < 0 || (size_t)body_length >= sizeof(body)) {
+    if (gmtime_r(&when, &value) == NULL) {
         return -1;
     }
 
-    const char *extra_header =
-        status == HTTP_STATUS_METHOD_NOT_ALLOWED ? "Allow: GET\r\n" : "";
+    if (strftime(buffer, capacity, "%a, %d %b %Y %H:%M:%S GMT",
+                 &value) == 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int http_build_head(char *buffer, size_t capacity,
+                           http_status_t status,
+                           const char *content_type,
+                           size_t content_length,
+                           time_t last_modified,
+                           const char *extra_headers)
+{
+    if (buffer == NULL || capacity == 0 || content_type == NULL) {
+        return -1;
+    }
+
+    char date[HTTP_DATE_SIZE];
+    if (http_format_date(time(NULL), date, sizeof(date)) != 0) {
+        return -1;
+    }
+
+    char last_modified_header[HTTP_DATE_SIZE + 24];
+    last_modified_header[0] = '\0';
+
+    if (last_modified > 0) {
+        char modified[HTTP_DATE_SIZE];
+
+        if (http_format_date(last_modified, modified,
+                             sizeof(modified)) != 0) {
+            return -1;
+        }
+
+        int written = snprintf(last_modified_header,
+                               sizeof(last_modified_header),
+                               "Last-Modified: %s\r\n", modified);
+        if (written < 0 ||
+            (size_t)written >= sizeof(last_modified_header)) {
+            return -1;
+        }
+    }
 
     int written = snprintf(
         buffer, capacity,
         "HTTP/1.1 %d %s\r\n"
-        "Server: MiniHTTPd\r\n"
-        "Content-Type: text/plain; charset=utf-8\r\n"
-        "Content-Length: %d\r\n"
+        "Server: %s\r\n"
+        "Date: %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
         "Connection: close\r\n"
         "%s"
-        "\r\n"
-        "%s",
+        "%s"
+        "\r\n",
         (int)status,
-        reason,
-        body_length,
-        extra_header,
-        body);
+        http_reason_phrase(status),
+        HTTP_SERVER_NAME,
+        date,
+        content_type,
+        content_length,
+        last_modified_header,
+        extra_headers != NULL ? extra_headers : "");
 
     if (written < 0 || (size_t)written >= capacity) {
         return -1;
@@ -362,33 +398,65 @@ int http_build_response(char *buffer, size_t capacity,
     return written;
 }
 
-int http_build_file_response_header(char *buffer, size_t capacity,
-                                    http_status_t status,
-                                    const char *content_type,
-                                    size_t content_length)
+int http_build_error_response(char *buffer, size_t capacity,
+                              http_status_t status)
 {
-    if (buffer == NULL || capacity == 0 || content_type == NULL) {
+    if (buffer == NULL || capacity == 0) {
         return -1;
     }
 
     const char *reason = http_reason_phrase(status);
+    char body[2048];
 
-    int written = snprintf(
-        buffer, capacity,
-        "HTTP/1.1 %d %s\r\n"
-        "Server: MiniHTTPd\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        (int)status,
-        reason,
-        content_type,
-        content_length);
+    int body_length = snprintf(
+        body, sizeof(body),
+        "<!DOCTYPE html>\n"
+        "<html lang=\"es\">\n"
+        "<head>\n"
+        "<meta charset=\"utf-8\">\n"
+        "<title>%d %s</title>\n"
+        "</head>\n"
+        "<body>\n"
+        "<h1>%d %s</h1>\n"
+        "<p>MiniHTTPd no pudo procesar la solicitud.</p>\n"
+        "<hr>\n"
+        "<p>%s</p>\n"
+        "</body>\n"
+        "</html>\n",
+        (int)status, reason,
+        (int)status, reason,
+        HTTP_SERVER_NAME);
 
-    if (written < 0 || (size_t)written >= capacity) {
+    if (body_length < 0 || (size_t)body_length >= sizeof(body)) {
         return -1;
     }
 
-    return written;
+    const char *extra_headers =
+        status == HTTP_STATUS_METHOD_NOT_ALLOWED ? "Allow: GET\r\n" : "";
+
+    int head_length = http_build_head(buffer, capacity, status,
+                                      "text/html; charset=utf-8",
+                                      (size_t)body_length, 0,
+                                      extra_headers);
+    if (head_length < 0) {
+        return -1;
+    }
+
+    if ((size_t)head_length + (size_t)body_length >= capacity) {
+        return -1;
+    }
+
+    memcpy(buffer + head_length, body, (size_t)body_length);
+
+    return head_length + body_length;
+}
+
+int http_build_file_response_header(char *buffer, size_t capacity,
+                                    http_status_t status,
+                                    const char *content_type,
+                                    size_t content_length,
+                                    time_t last_modified)
+{
+    return http_build_head(buffer, capacity, status, content_type,
+                           content_length, last_modified, NULL);
 }

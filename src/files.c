@@ -21,6 +21,7 @@ files_result_t files_open(const char *uri, files_file_t *file)
 
     file->fd = -1;
     file->size = 0;
+    file->modified = 0;
     file->path[0] = '\0';
 
     if (uri[0] != '/') {
@@ -129,6 +130,7 @@ files_result_t files_open(const char *uri, files_file_t *file)
     memcpy(file->path, resolved, path_length + 1);
     file->fd = fd;
     file->size = (size_t)status.st_size;
+    file->modified = status.st_mtime;
 
     return FILES_OK;
 }

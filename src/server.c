@@ -1,6 +1,7 @@
 #include "server.h"
 #include "http.h"
 #include "files.h"
+#include "mime.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -20,7 +21,7 @@ static const char *find_header_end(const char *data, size_t length);
 static http_status_t serve_file(int client_fd,
                                 const http_request_t *request);
 static http_status_t file_result_to_status(files_result_t result);
-static void send_simple_response(int client_fd, http_status_t status);
+static void send_error_response(int client_fd, http_status_t status);
 static void drain_client(int client_fd);
 static int send_all(int fd, const char *data, size_t length);
 
@@ -132,7 +133,7 @@ static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
                    request.version,
                    (int)status);
         } else {
-            send_simple_response(client_fd, status);
+            send_error_response(client_fd, status);
             printf("Solicitud rechazada -> %d\n", (int)status);
         }
         fflush(stdout);
@@ -140,14 +141,14 @@ static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
         printf("Solicitud rechazada -> %d (demasiado grande)\n",
                (int)HTTP_STATUS_BAD_REQUEST);
         fflush(stdout);
-        send_simple_response(client_fd, HTTP_STATUS_BAD_REQUEST);
+        send_error_response(client_fd, HTTP_STATUS_BAD_REQUEST);
         shutdown(client_fd, SHUT_WR);
         drain_client(client_fd);
     } else if (read_result == 0 && request_length > 0) {
         printf("Solicitud rechazada -> %d (incompleta)\n",
                (int)HTTP_STATUS_BAD_REQUEST);
         fflush(stdout);
-        send_simple_response(client_fd, HTTP_STATUS_BAD_REQUEST);
+        send_error_response(client_fd, HTTP_STATUS_BAD_REQUEST);
     } else if (read_result == -1) {
         perror("recv");
     }
@@ -219,21 +220,24 @@ static http_status_t serve_file(int client_fd,
 
     if (result != FILES_OK) {
         http_status_t status = file_result_to_status(result);
-        send_simple_response(client_fd, status);
+        send_error_response(client_fd, status);
         return status;
     }
+
+    const char *content_type = mime_type_from_path(file.path);
 
     char header[HTTP_RESPONSE_BUFFER_SIZE];
     int header_length = http_build_file_response_header(
         header,
         sizeof(header),
         HTTP_STATUS_OK,
-        FILES_DEFAULT_CONTENT_TYPE,
-        file.size);
+        content_type,
+        file.size,
+        file.modified);
 
     if (header_length < 0) {
         files_close(&file);
-        send_simple_response(client_fd, HTTP_STATUS_INTERNAL_SERVER_ERROR);
+        send_error_response(client_fd, HTTP_STATUS_INTERNAL_SERVER_ERROR);
         return HTTP_STATUS_INTERNAL_SERVER_ERROR;
     }
 
@@ -270,6 +274,11 @@ static http_status_t serve_file(int client_fd,
     }
 
     files_close(&file);
+
+    printf("Archivo servido: %s (%s, %zu bytes)\n",
+           file.path, content_type, file.size);
+    fflush(stdout);
+
     return HTTP_STATUS_OK;
 }
 
@@ -290,11 +299,12 @@ static http_status_t file_result_to_status(files_result_t result)
     }
 }
 
-static void send_simple_response(int client_fd, http_status_t status)
+static void send_error_response(int client_fd, http_status_t status)
 {
     char response[HTTP_RESPONSE_BUFFER_SIZE];
-    int response_length = http_build_response(response, sizeof(response),
-                                              NULL, status);
+    int response_length = http_build_error_response(response,
+                                                    sizeof(response),
+                                                    status);
 
     if (response_length < 0) {
         return;

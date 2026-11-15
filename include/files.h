@@ -3,10 +3,10 @@
 
 #include <stddef.h>
 #include <sys/types.h>
+#include <time.h>
 
 #define FILES_WWW_ROOT "www"
 #define FILES_MAX_PATH 4096
-#define FILES_DEFAULT_CONTENT_TYPE "application/octet-stream"
 
 typedef enum {
     FILES_OK = 0,
@@ -19,12 +19,14 @@ typedef enum {
 typedef struct {
     int fd;
     size_t size;
+    time_t modified;
     char path[FILES_MAX_PATH];
 } files_file_t;
 
 /*
  * Busca y abre un archivo dentro de www a partir de la URI solicitada.
  * La URI debe comenzar con '/'. La ruta "/" se resuelve como index.html.
+ * Al abrirlo guarda su tamano y su fecha de modificacion.
  */
 files_result_t files_open(const char *uri, files_file_t *file);
 
