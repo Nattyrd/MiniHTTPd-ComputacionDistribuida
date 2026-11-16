@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="MiniHTTPd: servidor HTTP/1.1 en C para Linux con archivos estáticos, MIME, seguridad y concurrencia con epoll.">
+    <meta name="theme-color" content="#070b14">
+    <title>MiniHTTPd — Servidor HTTP/1.1 en C</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23070b14'/%3E%3Cpath d='M18 22l10 10-10 10' stroke='%2322d3ee' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cline x1='34' y1='42' x2='46' y2='42' stroke='%2334d399' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+    <svg class="svg-sprite" aria-hidden="true" focusable="false" width="0" height="0">
+        <symbol id="icon-terminal" viewBox="0 0 24 24">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+        </symbol>
+        <symbol id="icon-server" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="7" rx="2"></rect>
+            <rect x="3" y="13" width="18" height="7" rx="2"></rect>
+            <line x1="7" y1="7.5" x2="7.01" y2="7.5"></line>
+            <line x1="7" y1="16.5" x2="7.01" y2="16.5"></line>
+            <line x1="11" y1="7.5" x2="17" y2="7.5"></line>
+            <line x1="11" y1="16.5" x2="17" y2="16.5"></line>
+        </symbol>
+        <symbol id="icon-code" viewBox="0 0 24 24">
+            <polyline points="16 18 22 12 16 6"></polyline>
+            <polyline points="8 6 2 12 8 18"></polyline>
+        </symbol>
+        <symbol id="icon-folder" viewBox="0 0 24 24">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+        </symbol>
+        <symbol id="icon-layers" viewBox="0 0 24 24">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+        </symbol>
+        <symbol id="icon-zap" viewBox="0 0 24 24">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+        </symbol>
+        <symbol id="icon-shield" viewBox="0 0 24 24">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            <polyline points="9 12 11 14 15 10"></polyline>
+        </symbol>
+        <symbol id="icon-check" viewBox="0 0 24 24">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </symbol>
+        <symbol id="icon-arrow-right" viewBox="0 0 24 24">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+        </symbol>
+        <symbol id="icon-clock" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9"></circle>
+            <polyline points="12 7 12 12 15 14"></polyline>
+        </symbol>
+        <symbol id="icon-globe" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9"></circle>
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"></path>
+        </symbol>
+    </svg>
+
+    <div class="background" aria-hidden="true">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+        <div class="grid"></div>
+    </div>
+
+    <header class="site-header">
+        <div class="container header-inner">
+            <a class="brand" href="/" aria-label="MiniHTTPd, inicio">
+                <span class="brand-mark">
+                    <svg class="icon" aria-hidden="true"><use href="#icon-terminal"></use></svg>
+                </span>
+                <span class="brand-text">Mini<span class="brand-accent">HTTPd</span></span>
+            </a>
+
+            <nav class="site-nav" aria-label="Navegación principal">
+                <a href="#caracteristicas">Características</a>
+                <a href="#fases">Fases</a>
+                <a href="#pruebas">Endpoints</a>
+                <a href="#ejecutar">Ejecutar</a>
+            </nav>
+
+            <span class="status-pill">
+                <span class="status-dot" aria-hidden="true"></span>
+                en línea
+            </span>
+        </div>
+    </header>
+
+    <main id="contenido">
+        <section class="hero">
+            <div class="container hero-grid">
+                <div class="hero-copy">
+                    <p class="eyebrow">Proyecto Integrador · Computación Distribuida</p>
+                    <h1>Un servidor HTTP/1.1 <span class="gradient-text">desde cero</span> en C.</h1>
+                    <p class="hero-lede">
+                        Sockets, parsing HTTP, archivos estáticos, MIME, seguridad y
+                        concurrencia con <code>epoll</code>. Sin bibliotecas HTTP externas.
+                    </p>
+
+                    <div class="hero-actions">
+                        <a class="btn btn-primary" href="#ejecutar">
+                            Ver cómo ejecutarlo
+                            <svg class="icon" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                        </a>
+                        <a class="btn btn-ghost" href="#fases">Explorar las fases</a>
+                    </div>
+
+                    <ul class="hero-stats" aria-label="Resumen del proyecto">
+                        <li><strong>6</strong><span>fases completadas</span></li>
+                        <li><strong>512</strong><span>conexiones simultáneas</span></li>
+                        <li><strong>6</strong><span>códigos de estado</span></li>
+                        <li><strong>13</strong><span>tipos MIME</span></li>
+                    </ul>
+                </div>
+
+                <div class="hero-visual">
+                    <div class="terminal">
+                        <div class="terminal-bar" aria-hidden="true">
+                            <span></span><span></span><span></span>
+                            <em>bash — minihttpd</em>
+                        </div>
+                        <pre><code><span class="t-prompt">$</span> make
+<span class="t-dim">cc -Iinclude -std=c11 -Wall -Wextra -Wpedantic -O2</span>
+<span class="t-ok">✓ compilación limpia</span>
+
+<span class="t-prompt">$</span> ./minihttpd 8080
+<span class="t-info">MiniHTTPd escuchando en el puerto 8080</span>
+<span class="t-dim">(epoll, max 512 conexiones)</span>
+
+<span class="t-prompt">$</span> curl -i http://127.0.0.1:8080/
+<span class="t-ok">HTTP/1.1 200 OK</span>
+<span class="t-dim">Server: MiniHTTPd/1.0</span>
+<span class="t-dim">Content-Type: text/html; charset=utf-8</span>
+<span class="t-dim">Connection: close</span></code></pre>
+                    </div>
+                    <div class="terminal-glow" aria-hidden="true"></div>
+                    <div class="floating-badge">
+                        <svg class="icon" aria-hidden="true"><use href="#icon-check"></use></svg>
+                        200 OK
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="caracteristicas">
+            <div class="container">
+                <div class="section-heading">
+                    <p class="eyebrow">Bajo el capó</p>
+                    <h2>Todo lo que hace funcionar al servidor</h2>
+                    <p>
+                        Una implementación compacta, explícita y sin dependencias externas:
+                        desde el socket TCP hasta la respuesta HTTP completa.
+                    </p>
+                </div>
+
+                <div class="feature-grid">
+                    <article class="card">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-server"></use></svg>
+                        </span>
+                        <h3>Sockets TCP puros</h3>
+                        <p>
+                            Creación del socket, <code>bind</code>, <code>listen</code> y
+                            <code>accept</code> directamente sobre la API de Linux.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">C11</span>
+                            <span class="tag">sockets</span>
+                            <span class="tag">Linux</span>
+                        </div>
+                    </article>
+
+                    <article class="card">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-code"></use></svg>
+                        </span>
+                        <h3>Parsing HTTP/1.1</h3>
+                        <p>
+                            Lectura incremental de la solicitud, validación del método,
+                            la URI y la versión, y extracción de <code>Host</code>,
+                            <code>User-Agent</code> y <code>Connection</code>.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">GET</span>
+                            <span class="tag">headers</span>
+                            <span class="tag">400 / 405</span>
+                        </div>
+                    </article>
+
+                    <article class="card">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-folder"></use></svg>
+                        </span>
+                        <h3>Archivos estáticos</h3>
+                        <p>
+                            Servicio desde <code>www/</code>, resolución de
+                            <code>/</code> a <code>index.html</code> y envío por bloques
+                            con <code>Content-Length</code> y <code>Last-Modified</code>.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">www</span>
+                            <span class="tag">streaming</span>
+                            <span class="tag">200 / 404</span>
+                        </div>
+                    </article>
+
+                    <article class="card">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-layers"></use></svg>
+                        </span>
+                        <h3>Tipos MIME</h3>
+                        <p>
+                            Detección por extensión para HTML, CSS, JavaScript, imágenes,
+                            JSON, PDF y más. Cualquier extensión desconocida cae en
+                            <code>application/octet-stream</code>.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">mime.c</span>
+                            <span class="tag">13 tipos</span>
+                            <span class="tag">charset</span>
+                        </div>
+                    </article>
+
+                    <article class="card">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-zap"></use></svg>
+                        </span>
+                        <h3>Concurrencia con epoll</h3>
+                        <p>
+                            Sockets no bloqueantes, un bucle de eventos y una máquina de
+                            estados por conexión. Hasta 512 clientes atendidos sin bloquear
+                            al servidor.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">epoll</span>
+                            <span class="tag">O_NONBLOCK</span>
+                            <span class="tag">512 clientes</span>
+                        </div>
+                    </article>
+
+                    <article class="card">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-shield"></use></svg>
+                        </span>
+                        <h3>Seguridad primero</h3>
+                        <p>
+                            Validación de rutas, rechazo de <code>..</code>,
+                            canonicalización con <code>realpath()</code>, límites de
+                            solicitud y compilación endurecida.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">realpath</span>
+                            <span class="tag">límites</span>
+                            <span class="tag">FORTIFY</span>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="fases">
+            <div class="container">
+                <div class="section-heading">
+                    <p class="eyebrow">Roadmap</p>
+                    <h2>Construido fase por fase</h2>
+                    <p>
+                        El proyecto avanza desde un eco TCP hasta un servidor concurrente
+                        con respuestas HTTP completas y protecciones reales.
+                    </p>
+                </div>
+
+                <ol class="timeline">
+                    <li class="timeline-item done">
+                        <span class="timeline-marker">01</span>
+                        <div class="timeline-content">
+                            <h3>Servidor TCP <span class="status-tag">completada</span></h3>
+                            <p>Socket, <code>bind</code>, <code>listen</code>, <code>accept</code> y eco de datos.</p>
+                        </div>
+                    </li>
+
+                    <li class="timeline-item done">
+                        <span class="timeline-marker">02</span>
+                        <div class="timeline-content">
+                            <h3>Primera solicitud HTTP <span class="status-tag">completada</span></h3>
+                            <p>Parsing de GET, URI, versión y encabezados básicos. Respuestas 200, 400 y 405.</p>
+                        </div>
+                    </li>
+
+                    <li class="timeline-item done">
+                        <span class="timeline-marker">03</span>
+                        <div class="timeline-content">
+                            <h3>Archivos estáticos <span class="status-tag">completada</span></h3>
+                            <p>Servicio desde <code>www</code>, <code>index.html</code> para <code>/</code> y control de 403, 404 y 500.</p>
+                        </div>
+                    </li>
+
+                    <li class="timeline-item done">
+                        <span class="timeline-marker">04</span>
+                        <div class="timeline-content">
+                            <h3>Respuestas completas <span class="status-tag">completada</span></h3>
+                            <p>MIME, <code>Server</code>, <code>Date</code>, <code>Content-Type</code>, <code>Content-Length</code> y <code>Last-Modified</code>.</p>
+                        </div>
+                    </li>
+
+                    <li class="timeline-item done">
+                        <span class="timeline-marker">05</span>
+                        <div class="timeline-content">
+                            <h3>Seguridad <span class="status-tag">completada</span></h3>
+                            <p>Límites estrictos, bloqueo de traversal, enlaces simbólicos seguros y binario endurecido.</p>
+                        </div>
+                    </li>
+
+                    <li class="timeline-item done">
+                        <span class="timeline-marker">06</span>
+                        <div class="timeline-content">
+                            <h3>Concurrencia con epoll <span class="status-tag">completada</span></h3>
+                            <p>Sockets no bloqueantes, bucle de eventos, escritura por bloques y 512 conexiones simultáneas.</p>
+                        </div>
+                    </li>
+
+                    <li class="timeline-item pending">
+                        <span class="timeline-marker">07</span>
+                        <div class="timeline-content">
+                            <h3>Conexiones persistentes <span class="status-tag">pendiente</span></h3>
+                            <p>Reutilización de conexiones HTTP/1.1 y <code>keep-alive</code> para varias solicitudes por cliente.</p>
+                        </div>
+                    </li>
+                </ol>
+            </div>
+        </section>
+
+        <section class="section" id="pruebas">
+            <div class="container">
+                <div class="section-heading">
+                    <p class="eyebrow">Endpoints</p>
+                    <h2>Pruébalo ahora</h2>
+                    <p>
+                        Estos recursos los sirve el propio MiniHTTPd. Ábrelos para ver
+                        los encabezados, los tipos MIME y las respuestas de error.
+                    </p>
+                </div>
+
+                <div class="endpoint-grid">
+                    <a class="endpoint" href="/">
+                        <div class="endpoint-top">
+                            <span class="method">GET</span>
+                            <code>/</code>
+                        </div>
+                        <span class="endpoint-desc">Documento por defecto · index.html</span>
+                        <div class="endpoint-bottom">
+                            <span class="badge ok">200 OK</span>
+                            <svg class="icon endpoint-arrow" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                        </div>
+                    </a>
+
+                    <a class="endpoint" href="/style.css">
+                        <div class="endpoint-top">
+                            <span class="method">GET</span>
+                            <code>/style.css</code>
+                        </div>
+                        <span class="endpoint-desc">Hoja de estilos · text/css</span>
+                        <div class="endpoint-bottom">
+                            <span class="badge ok">200 OK</span>
+                            <svg class="icon endpoint-arrow" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                        </div>
+                    </a>
+
+                    <a class="endpoint" href="/image.jpg">
+                        <div class="endpoint-top">
+                            <span class="method">GET</span>
+                            <code>/image.jpg</code>
+                        </div>
+                        <span class="endpoint-desc">Recurso de prueba · image/jpeg</span>
+                        <div class="endpoint-bottom">
+                            <span class="badge ok">200 OK</span>
+                            <svg class="icon endpoint-arrow" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                        </div>
+                    </a>
+
+                    <a class="endpoint" href="/no-existe">
+                        <div class="endpoint-top">
+                            <span class="method">GET</span>
+                            <code>/no-existe</code>
+                        </div>
+                        <span class="endpoint-desc">Archivo inexistente · página HTML</span>
+                        <div class="endpoint-bottom">
+                            <span class="badge notfound">404 Not Found</span>
+                            <svg class="icon endpoint-arrow" aria-hidden="true"><use href="#icon-arrow-right"></use></svg>
+                        </div>
+                    </a>
+                </div>
+
+                <div class="note">
+                    <svg class="icon note-icon" aria-hidden="true"><use href="#icon-shield"></use></svg>
+                    <div>
+                        <p>
+                            La protección contra <strong>directory traversal</strong> también
+                            está activa. Una ruta que intente salir de <code>www</code> se
+                            rechaza con <code>403 Forbidden</code>:
+                        </p>
+                        <code>curl -i --path-as-is http://127.0.0.1:8080/../../etc/passwd</code>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section" id="ejecutar">
+            <div class="container">
+                <div class="section-heading">
+                    <p class="eyebrow">Puesta en marcha</p>
+                    <h2>Compilar y ejecutar</h2>
+                    <p>
+                        Solo necesitas Linux, <code>gcc</code> y <code>make</code>.
+                        Ejecuta el servidor desde el directorio <code>minihttpd/</code>
+                        porque <code>www</code> se resuelve relativo al directorio de trabajo.
+                    </p>
+                </div>
+
+                <div class="run-grid">
+                    <div class="code-card">
+                        <header>
+                            <span>terminal — compilar y arrancar</span>
+                            <svg class="icon" aria-hidden="true"><use href="#icon-terminal"></use></svg>
+                        </header>
+                        <pre><code><span class="prompt">$</span> cd minihttpd
+<span class="prompt">$</span> make
+<span class="comment"># compilación limpia con -Wall -Wextra -Wpedantic</span>
+<span class="prompt">$</span> ./minihttpd 8080
+<span class="accent">MiniHTTPd escuchando en el puerto 8080</span>
+<span class="comment"># epoll, max 512 conexiones</span></code></pre>
+                    </div>
+
+                    <div class="code-card">
+                        <header>
+                            <span>terminal — probar la respuesta</span>
+                            <svg class="icon" aria-hidden="true"><use href="#icon-globe"></use></svg>
+                        </header>
+                        <pre><code><span class="prompt">$</span> curl -i http://127.0.0.1:8080/
+<span class="accent">HTTP/1.1 200 OK</span>
+<span class="comment">Server: MiniHTTPd/1.0</span>
+<span class="comment">Content-Type: text/html; charset=utf-8</span>
+<span class="comment">Connection: close</span>
+
+<span class="prompt">$</span> curl -sS http://127.0.0.1:8080/image.jpg -o /tmp/image.jpg
+<span class="prompt">$</span> sha256sum www/image.jpg /tmp/image.jpg
+<span class="ok"># los hashes deben coincidir</span></code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container footer-inner">
+            <p>MiniHTTPd · Proyecto Integrador de Computación Distribuida</p>
+            <p class="footer-meta">C · Linux · epoll · HTTP/1.1</p>
+        </div>
+    </footer>
+</body>
+</html>
