@@ -90,6 +90,7 @@ http_status_t http_parse_request(const char *data, size_t length,
     const char *cursor = line_end + 2;
     const char *end = data + length;
     int header_count = 0;
+    int host_seen = 0;
 
     while (cursor < end) {
         const char *header_end = memchr(cursor, '\r',
@@ -105,6 +106,15 @@ http_status_t http_parse_request(const char *data, size_t length,
         if (header_length == 0) {
             if (strcmp(request->method, "GET") != 0) {
                 return HTTP_STATUS_METHOD_NOT_ALLOWED;
+            }
+
+            /*
+             * HTTP/1.1 exige el encabezado Host. Rechazar su ausencia
+             * evita solicitudes ambiguas.
+             */
+            if (strcmp(request->version, "HTTP/1.1") == 0 &&
+                request->host[0] == '\0') {
+                return HTTP_STATUS_BAD_REQUEST;
             }
 
             return HTTP_STATUS_OK;
@@ -132,6 +142,12 @@ http_status_t http_parse_request(const char *data, size_t length,
         }
 
         if (header_name_equals(cursor, name_length, "Host")) {
+            if (host_seen) {
+                return HTTP_STATUS_BAD_REQUEST;
+            }
+
+            host_seen = 1;
+
             if (copy_header_value(request->host, sizeof(request->host),
                                   value, value_length) != 0) {
                 return HTTP_STATUS_BAD_REQUEST;
@@ -148,6 +164,13 @@ http_status_t http_parse_request(const char *data, size_t length,
                                   value, value_length) != 0) {
                 return HTTP_STATUS_BAD_REQUEST;
             }
+        } else if (header_name_equals(cursor, name_length,
+                                      "Transfer-Encoding")) {
+            /*
+             * El servidor no procesa cuerpos de solicitud, por lo que
+             * no admite Transfer-Encoding.
+             */
+            return HTTP_STATUS_BAD_REQUEST;
         }
 
         header_count++;

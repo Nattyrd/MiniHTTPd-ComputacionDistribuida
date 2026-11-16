@@ -15,6 +15,7 @@
 
 static int create_listening_socket(uint16_t port);
 static void handle_client(int client_fd, const struct sockaddr_in *client_addr);
+static void configure_client_timeouts(int client_fd);
 static int read_http_request(int fd, char *buffer, size_t capacity,
                              size_t *length);
 static const char *find_header_end(const char *data, size_t length);
@@ -99,6 +100,24 @@ static int create_listening_socket(uint16_t port)
     return fd;
 }
 
+static void configure_client_timeouts(int client_fd)
+{
+    struct timeval timeout;
+
+    timeout.tv_sec = SERVER_CLIENT_TIMEOUT_SEC;
+    timeout.tv_usec = 0;
+
+    if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO,
+                   &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt SO_RCVTIMEO");
+    }
+
+    if (setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO,
+                   &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt SO_SNDTIMEO");
+    }
+}
+
 static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
 {
     char client_ip[INET_ADDRSTRLEN];
@@ -112,6 +131,8 @@ static void handle_client(int client_fd, const struct sockaddr_in *client_addr)
            client_ip,
            (unsigned)ntohs(client_addr->sin_port));
     fflush(stdout);
+
+    configure_client_timeouts(client_fd);
 
     char request_buffer[HTTP_MAX_REQUEST_SIZE + 1];
     size_t request_length = 0;
@@ -182,6 +203,14 @@ static int read_http_request(int fd, char *buffer, size_t capacity,
         if (received < 0) {
             if (errno == EINTR) {
                 continue;
+            }
+
+            /*
+             * Si se agota el tiempo de espera, se trata como una
+             * solicitud incompleta: el llamador responde 400 o cierra.
+             */
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return 0;
             }
 
             return -1;

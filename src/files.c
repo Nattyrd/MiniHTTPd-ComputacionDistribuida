@@ -41,6 +41,9 @@ files_result_t files_open(const char *uri, files_file_t *file)
      * Rechaza cualquier intento de retroceder con "..". El chequeo con
      * realpath() sigue siendo la defensa principal, pero este rechazo
      * temprano deja claro que el cliente intento salir de www.
+     *
+     * La URI no se decodifica: secuencias como "%2e%2e" se tratan como
+     * parte del nombre del archivo y nunca como un segmento "..".
      */
     if (uri_has_parent_segment(uri, uri_length)) {
         return FILES_FORBIDDEN;
@@ -155,6 +158,15 @@ void files_close(files_file_t *file)
 static int path_is_inside_root(const char *root, const char *path)
 {
     size_t root_length = strlen(root);
+
+    if (root_length == 0) {
+        return 0;
+    }
+
+    /* Caso especial: si la raiz es "/", todo camino absoluto esta dentro. */
+    if (root_length == 1 && root[0] == '/') {
+        return path[0] == '/';
+    }
 
     if (strncmp(root, path, root_length) != 0) {
         return 0;

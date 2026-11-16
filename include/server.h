@@ -8,6 +8,14 @@
 #define SERVER_BUFFER_SIZE 4096
 
 /*
+ * Tiempo maximo (en segundos) para recibir la solicitud y para enviar la
+ * respuesta. Evita que un cliente lento bloquee al servidor secuencial.
+ */
+#ifndef SERVER_CLIENT_TIMEOUT_SEC
+#define SERVER_CLIENT_TIMEOUT_SEC 10
+#endif
+
+/*
  * Inicia el servidor TCP y atiende clientes de forma secuencial.
  * Retorna 0 si el servidor termina correctamente y 1 si ocurre un error.
  */

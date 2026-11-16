@@ -27,6 +27,19 @@ Servidor HTTP/1.1 basico desarrollado en C para Linux, sin bibliotecas HTTP exte
     y su `Content-Length` correcto.
   - Agrega `Allow: GET` en las respuestas 405.
   - Cubre los codigos 200, 400, 403, 404, 405 y 500.
+- Fase 5: seguridad.
+  - Valida la URI (debe iniciar con `/`, sin caracteres de control).
+  - Aplica limites estrictos al tamano de la solicitud, la linea de solicitud,
+    la URI, cada encabezado y la cantidad de encabezados.
+  - Bloquea Directory Traversal con el rechazo de segmentos `..`, la
+    canonicalizacion con `realpath()` y la verificacion de que el archivo
+    resuelto permanezca dentro de `www`.
+  - Bloquea enlaces simbolicos que apunten fuera de `www`.
+  - Exige `Host` en HTTP/1.1 y rechaza `Host` duplicados.
+  - Rechaza `Transfer-Encoding`, que el servidor no procesa.
+  - Usa solo funciones acotadas (`snprintf`, `memcpy` con comprobaciones) y
+    compila con `_FORTIFY_SOURCE=2`, `-fstack-protector-strong`, `relro` y `now`.
+  - Aplica tiempos maximos de recepcion y envio para evitar clientes lentos.
 - La atencion sigue siendo secuencial: se procesa un cliente a la vez y se
   responde una solicitud por conexion (`Connection: close`). La concurrencia con
   epoll y las conexiones persistentes se agregaran en una fase posterior.
@@ -53,11 +66,42 @@ Servidor HTTP/1.1 basico desarrollado en C para Linux, sin bibliotecas HTTP exte
 | Codigo | Situacion |
 |--------|-----------|
 | `200 OK` | El archivo existe y se envia su contenido. |
-| `400 Bad Request` | Solicitud mal formada, URI invalida, version no soportada o solicitud demasiado grande. |
+| `400 Bad Request` | Solicitud mal formada, URI invalida, version no soportada, `Host` ausente o duplicado en HTTP/1.1, `Transfer-Encoding` o solicitud demasiado grande. |
 | `403 Forbidden` | La ruta intenta salir de `www`, apunta a un directorio o no hay permisos. |
 | `404 Not Found` | El archivo solicitado no existe. |
 | `405 Method Not Allowed` | El metodo no es GET; incluye `Allow: GET`. |
 | `500 Internal Server Error` | Error interno al abrir o leer el archivo. |
+
+## Limites de la solicitud
+
+| Elemento | Limite | Constante |
+|----------|--------|-----------|
+| Solicitud completa | 8192 bytes | `HTTP_MAX_REQUEST_SIZE` |
+| Linea de solicitud | 4096 bytes | `HTTP_MAX_REQUEST_LINE` |
+| URI | 2048 bytes | `HTTP_MAX_URI_SIZE` |
+| Linea de encabezado | 1024 bytes | `HTTP_MAX_HEADER_LINE` |
+| Cantidad de encabezados | 64 | `HTTP_MAX_HEADERS` |
+| Metodo | 16 bytes | `HTTP_MAX_METHOD_SIZE` |
+| Espera de recepcion/envio | 10 segundos | `SERVER_CLIENT_TIMEOUT_SEC` |
+
+## Seguridad
+
+- **Directory Traversal**: la URI debe empezar con `/`; se rechaza cualquier
+  segmento `..`; luego `realpath()` resuelve enlaces y `path_is_inside_root()`
+  comprueba que el resultado siga dentro de `www`. Una URI con `%2e%2e` no se
+  decodifica, por lo que se trata como un nombre literal y no como traversal.
+- **Enlaces simbolicos**: un enlace dentro de `www` que apunte fuera de `www`
+  se rechaza con 403. Un enlace circular produce un 500 controlado.
+- **Desbordamientos**: no se usan `strcpy`, `strcat` ni `sprintf`; todas las
+  copias usan `snprintf` o `memcpy` con verificacion previa de longitud.
+- **Solicitudes ambiguas**: en HTTP/1.1 se exige `Host`, se rechazan los
+  `Host` duplicados y no se admite `Transfer-Encoding`.
+- **Clientes lentos**: cada conexion tiene un tiempo maximo de recepcion y de
+  envio, de modo que un cliente que no completa la solicitud no bloquea al
+  servidor indefinidamente.
+- **Limitaciones conocidas**: el servidor es secuencial, no usa TLS ni
+  autenticacion, y existe una ventana TOCTOU entre `realpath()` y `open()`.
+  Las conexiones persistentes y `epoll` corresponden a la siguiente fase.
 
 ## Requisitos
 
@@ -128,6 +172,34 @@ printf 'POST / HTTP/1.1\r\nHost: localhost\r\n\r\n' | nc 127.0.0.1 8080
 ```
 
 La respuesta debe ser `405 Method Not Allowed` con el encabezado `Allow: GET`.
+
+## Prueba de limites y seguridad
+
+`Host` es obligatorio en HTTP/1.1:
+
+```sh
+printf 'GET / HTTP/1.1\r\n\r\n' | nc 127.0.0.1 8080
+```
+
+Debe responder `400 Bad Request`.
+
+Una URI demasiado larga tambien se rechaza:
+
+```sh
+curl -i "http://127.0.0.1:8080/$(head -c 3000 /dev/zero | tr '\0' 'a')"
+```
+
+Debe responder `400 Bad Request`.
+
+Un enlace simbolico dentro de `www` que apunte fuera del directorio se rechaza:
+
+```sh
+ln -s /etc/passwd www/escape
+curl -i http://127.0.0.1:8080/escape
+rm www/escape
+```
+
+Debe responder `403 Forbidden`.
 
 ## Estructura
 

@@ -1,7 +1,8 @@
 CC ?= cc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -O2
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -O2 \
+          -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fstack-protector-strong
 CPPFLAGS ?= -Iinclude
-LDFLAGS ?=
+LDFLAGS ?= -Wl,-z,relro,-z,now
 LDLIBS ?=
 
 TARGET := minihttpd
