@@ -7,7 +7,7 @@ LDLIBS ?=
 
 TARGET := minihttpd
 
-# Fase 4: main.c, server.c, http.c, files.c y mime.c.
+# Fase 7: main.c, server.c, http.c, files.c y mime.c.
 SRCS := src/main.c src/server.c src/http.c src/files.c src/mime.c
 OBJS := $(SRCS:.c=.o)
 DEPS := $(OBJS:.o=.d)

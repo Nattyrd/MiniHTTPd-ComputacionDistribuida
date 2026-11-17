@@ -20,6 +20,24 @@
 #endif
 
 /*
+ * Tiempo maximo (en segundos) que una conexion persistente puede estar
+ * ociosa esperando la siguiente solicitud. Es menor que el tiempo de
+ * recepcion para liberar rapidamente las conexiones keep-alive inactivas.
+ */
+#ifndef SERVER_KEEPALIVE_TIMEOUT_SEC
+#define SERVER_KEEPALIVE_TIMEOUT_SEC 5
+#endif
+
+/*
+ * Cantidad maxima de solicitudes atendidas en una misma conexion
+ * persistente. Al llegar al limite, la ultima respuesta anuncia
+ * "Connection: close" y la conexion se cierra ordenadamente.
+ */
+#ifndef SERVER_MAX_REQUESTS_PER_CONNECTION
+#define SERVER_MAX_REQUESTS_PER_CONNECTION 100
+#endif
+
+/*
  * Tiempo maximo (en segundos) para descartar los datos que el cliente
  * siga enviando despues de una respuesta de error. Evita que el cierre
  * con datos sin leer genere un RST y el cliente pierda la respuesta.

@@ -2,6 +2,7 @@
 
 #include "http.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -15,6 +16,10 @@ static int header_name_equals(const char *name, size_t length,
                               const char *expected);
 static int copy_header_value(char *dest, size_t dest_size,
                              const char *value, size_t value_length);
+static int append_header_value(char *dest, size_t dest_size,
+                               const char *value, size_t value_length);
+static int parse_content_length(const char *value, size_t length,
+                                size_t *result);
 static const char *http_reason_phrase(http_status_t status);
 static int http_format_date(time_t when, char *buffer, size_t capacity);
 static int http_build_head(char *buffer, size_t capacity,
@@ -22,6 +27,7 @@ static int http_build_head(char *buffer, size_t capacity,
                            const char *content_type,
                            size_t content_length,
                            time_t last_modified,
+                           int keep_alive,
                            const char *extra_headers);
 
 http_status_t http_parse_request(const char *data, size_t length,
@@ -91,6 +97,7 @@ http_status_t http_parse_request(const char *data, size_t length,
     const char *end = data + length;
     int header_count = 0;
     int host_seen = 0;
+    int content_length_seen = 0;
 
     while (cursor < end) {
         const char *header_end = memchr(cursor, '\r',
@@ -106,6 +113,16 @@ http_status_t http_parse_request(const char *data, size_t length,
         if (header_length == 0) {
             if (strcmp(request->method, "GET") != 0) {
                 return HTTP_STATUS_METHOD_NOT_ALLOWED;
+            }
+
+            /*
+             * El servidor solo atiende solicitudes sin cuerpo. Rechazar
+             * un Content-Length mayor que cero evita que los bytes del
+             * cuerpo se interpreten como la siguiente solicitud de una
+             * conexion persistente.
+             */
+            if (request->content_length > 0) {
+                return HTTP_STATUS_BAD_REQUEST;
             }
 
             /*
@@ -159,9 +176,26 @@ http_status_t http_parse_request(const char *data, size_t length,
                 return HTTP_STATUS_BAD_REQUEST;
             }
         } else if (header_name_equals(cursor, name_length, "Connection")) {
-            if (copy_header_value(request->connection,
-                                  sizeof(request->connection),
-                                  value, value_length) != 0) {
+            /*
+             * RFC 7230 permite repetir Connection: los valores se combinan
+             * como una lista separada por comas. Asi "Connection: close"
+             * no se pierde si el cliente envia varios encabezados.
+             */
+            if (append_header_value(request->connection,
+                                    sizeof(request->connection),
+                                    value, value_length) != 0) {
+                return HTTP_STATUS_BAD_REQUEST;
+            }
+        } else if (header_name_equals(cursor, name_length,
+                                      "Content-Length")) {
+            if (content_length_seen) {
+                return HTTP_STATUS_BAD_REQUEST;
+            }
+
+            content_length_seen = 1;
+
+            if (parse_content_length(value, value_length,
+                                     &request->content_length) != 0) {
                 return HTTP_STATUS_BAD_REQUEST;
             }
         } else if (header_name_equals(cursor, name_length,
@@ -182,6 +216,57 @@ http_status_t http_parse_request(const char *data, size_t length,
     }
 
     return HTTP_STATUS_BAD_REQUEST;
+}
+
+int http_request_wants_keep_alive(const http_request_t *request)
+{
+    if (request == NULL) {
+        return 0;
+    }
+
+    int has_close = 0;
+    int has_keep_alive = 0;
+    const char *cursor = request->connection;
+
+    while (*cursor != '\0') {
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == ',') {
+            cursor++;
+        }
+
+        const char *start = cursor;
+
+        while (*cursor != '\0' && *cursor != ',') {
+            cursor++;
+        }
+
+        const char *end = cursor;
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+            end--;
+        }
+
+        size_t token_length = (size_t)(end - start);
+
+        if (header_name_equals(start, token_length, "close")) {
+            has_close = 1;
+        } else if (header_name_equals(start, token_length, "keep-alive")) {
+            has_keep_alive = 1;
+        }
+    }
+
+    /* "close" tiene prioridad si el cliente envia ambos tokens. */
+    if (has_close) {
+        return 0;
+    }
+
+    if (strcmp(request->version, "HTTP/1.1") == 0) {
+        return 1;
+    }
+
+    if (strcmp(request->version, "HTTP/1.0") == 0) {
+        return has_keep_alive;
+    }
+
+    return 0;
 }
 
 static int is_token_char(unsigned char c)
@@ -318,6 +403,81 @@ static int copy_header_value(char *dest, size_t dest_size,
     return 0;
 }
 
+static int append_header_value(char *dest, size_t dest_size,
+                               const char *value, size_t value_length)
+{
+    while (value_length > 0 &&
+           (*value == ' ' || *value == '\t')) {
+        value++;
+        value_length--;
+    }
+
+    while (value_length > 0 &&
+           (value[value_length - 1] == ' ' ||
+            value[value_length - 1] == '\t')) {
+        value_length--;
+    }
+
+    if (value_length == 0) {
+        return 0;
+    }
+
+    size_t used = strlen(dest);
+    size_t separator = used > 0 ? 2 : 0;
+
+    if (used + separator + value_length >= dest_size) {
+        return -1;
+    }
+
+    if (separator > 0) {
+        dest[used++] = ',';
+        dest[used++] = ' ';
+    }
+
+    memcpy(dest + used, value, value_length);
+    dest[used + value_length] = '\0';
+
+    return 0;
+}
+
+static int parse_content_length(const char *value, size_t length,
+                                size_t *result)
+{
+    while (length > 0 && (*value == ' ' || *value == '\t')) {
+        value++;
+        length--;
+    }
+
+    while (length > 0 &&
+           (value[length - 1] == ' ' || value[length - 1] == '\t')) {
+        length--;
+    }
+
+    if (length == 0) {
+        return -1;
+    }
+
+    size_t parsed = 0;
+
+    for (size_t i = 0; i < length; i++) {
+        unsigned char c = (unsigned char)value[i];
+
+        if (c < '0' || c > '9') {
+            return -1;
+        }
+
+        size_t digit = (size_t)(c - '0');
+        if (parsed > (SIZE_MAX - digit) / 10) {
+            return -1;
+        }
+
+        parsed = parsed * 10 + digit;
+    }
+
+    *result = parsed;
+    return 0;
+}
+
 static const char *http_reason_phrase(http_status_t status)
 {
     switch (status) {
@@ -363,6 +523,7 @@ static int http_build_head(char *buffer, size_t capacity,
                            const char *content_type,
                            size_t content_length,
                            time_t last_modified,
+                           int keep_alive,
                            const char *extra_headers)
 {
     if (buffer == NULL || capacity == 0 || content_type == NULL) {
@@ -401,7 +562,7 @@ static int http_build_head(char *buffer, size_t capacity,
         "Date: %s\r\n"
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
+        "Connection: %s\r\n"
         "%s"
         "%s"
         "\r\n",
@@ -411,6 +572,7 @@ static int http_build_head(char *buffer, size_t capacity,
         date,
         content_type,
         content_length,
+        keep_alive ? "keep-alive" : "close",
         last_modified_header,
         extra_headers != NULL ? extra_headers : "");
 
@@ -422,7 +584,7 @@ static int http_build_head(char *buffer, size_t capacity,
 }
 
 int http_build_error_response(char *buffer, size_t capacity,
-                              http_status_t status)
+                              http_status_t status, int keep_alive)
 {
     if (buffer == NULL || capacity == 0) {
         return -1;
@@ -460,7 +622,7 @@ int http_build_error_response(char *buffer, size_t capacity,
     int head_length = http_build_head(buffer, capacity, status,
                                       "text/html; charset=utf-8",
                                       (size_t)body_length, 0,
-                                      extra_headers);
+                                      keep_alive, extra_headers);
     if (head_length < 0) {
         return -1;
     }
@@ -478,8 +640,9 @@ int http_build_file_response_header(char *buffer, size_t capacity,
                                     http_status_t status,
                                     const char *content_type,
                                     size_t content_length,
-                                    time_t last_modified)
+                                    time_t last_modified,
+                                    int keep_alive)
 {
     return http_build_head(buffer, capacity, status, content_type,
-                           content_length, last_modified, NULL);
+                           content_length, last_modified, keep_alive, NULL);
 }

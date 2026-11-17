@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="MiniHTTPd: servidor HTTP/1.1 en C para Linux con archivos estáticos, MIME, seguridad y concurrencia con epoll.">
+    <meta name="description" content="MiniHTTPd: servidor HTTP/1.1 en C para Linux con archivos estáticos, MIME, seguridad, concurrencia con epoll y conexiones persistentes.">
     <meta name="theme-color" content="#070b14">
     <title>MiniHTTPd — Servidor HTTP/1.1 en C</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23070b14'/%3E%3Cpath d='M18 22l10 10-10 10' stroke='%2322d3ee' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cline x1='34' y1='42' x2='46' y2='42' stroke='%2334d399' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
@@ -60,6 +60,12 @@
             <line x1="3" y1="12" x2="21" y2="12"></line>
             <path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"></path>
         </symbol>
+        <symbol id="icon-repeat" viewBox="0 0 24 24">
+            <polyline points="17 1 21 5 17 9"></polyline>
+            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+            <polyline points="7 23 3 19 7 15"></polyline>
+            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+        </symbol>
     </svg>
 
     <div class="background" aria-hidden="true">
@@ -99,8 +105,9 @@
                     <p class="eyebrow">Proyecto Integrador · Computación Distribuida</p>
                     <h1>Un servidor HTTP/1.1 <span class="gradient-text">desde cero</span> en C.</h1>
                     <p class="hero-lede">
-                        Sockets, parsing HTTP, archivos estáticos, MIME, seguridad y
-                        concurrencia con <code>epoll</code>. Sin bibliotecas HTTP externas.
+                        Sockets, parsing HTTP, archivos estáticos, MIME, seguridad,
+                        concurrencia con <code>epoll</code> y conexiones persistentes.
+                        Sin bibliotecas HTTP externas.
                     </p>
 
                     <div class="hero-actions">
@@ -112,9 +119,9 @@
                     </div>
 
                     <ul class="hero-stats" aria-label="Resumen del proyecto">
-                        <li><strong>6</strong><span>fases completadas</span></li>
+                        <li><strong>7</strong><span>fases completadas</span></li>
                         <li><strong>512</strong><span>conexiones simultáneas</span></li>
-                        <li><strong>6</strong><span>códigos de estado</span></li>
+                        <li><strong>100</strong><span>solicitudes por conexión</span></li>
                         <li><strong>13</strong><span>tipos MIME</span></li>
                     </ul>
                 </div>
@@ -137,7 +144,7 @@
 <span class="t-ok">HTTP/1.1 200 OK</span>
 <span class="t-dim">Server: MiniHTTPd/1.0</span>
 <span class="t-dim">Content-Type: text/html; charset=utf-8</span>
-<span class="t-dim">Connection: close</span></code></pre>
+<span class="t-dim">Connection: keep-alive</span></code></pre>
                     </div>
                     <div class="terminal-glow" aria-hidden="true"></div>
                     <div class="floating-badge">
@@ -260,6 +267,25 @@
                             <span class="tag">FORTIFY</span>
                         </div>
                     </article>
+
+                    <article class="card card-featured">
+                        <span class="card-icon">
+                            <svg class="icon" aria-hidden="true"><use href="#icon-repeat"></use></svg>
+                        </span>
+                        <h3>Conexiones persistentes <span class="status-tag">fase 7</span></h3>
+                        <p>
+                            En HTTP/1.1 la conexión se reutiliza por defecto; HTTP/1.0
+                            puede pedirla con <code>Connection: keep-alive</code>. El
+                            servidor atiende varias solicitudes por cliente, admite
+                            <code>pipelining</code> y cierra las conexiones ociosas a
+                            los 5 segundos.
+                        </p>
+                        <div class="tags">
+                            <span class="tag">keep-alive</span>
+                            <span class="tag">pipelining</span>
+                            <span class="tag">100 req/conexión</span>
+                        </div>
+                    </article>
                 </div>
             </div>
         </section>
@@ -271,7 +297,8 @@
                     <h2>Construido fase por fase</h2>
                     <p>
                         El proyecto avanza desde un eco TCP hasta un servidor concurrente
-                        con respuestas HTTP completas y protecciones reales.
+                        con respuestas HTTP completas, conexiones persistentes y
+                        protecciones reales.
                     </p>
                 </div>
 
@@ -324,11 +351,11 @@
                         </div>
                     </li>
 
-                    <li class="timeline-item pending">
+                    <li class="timeline-item done">
                         <span class="timeline-marker">07</span>
                         <div class="timeline-content">
-                            <h3>Conexiones persistentes <span class="status-tag">pendiente</span></h3>
-                            <p>Reutilización de conexiones HTTP/1.1 y <code>keep-alive</code> para varias solicitudes por cliente.</p>
+                            <h3>Conexiones persistentes <span class="status-tag">completada</span></h3>
+                            <p><code>keep-alive</code> en HTTP/1.1, <code>pipelining</code>, cierre por inactividad a los 5 s y límite de 100 solicitudes por conexión.</p>
                         </div>
                     </li>
                 </ol>
@@ -407,6 +434,20 @@
                         <code>curl -i --path-as-is http://127.0.0.1:8080/../../etc/passwd</code>
                     </div>
                 </div>
+
+                <div class="note">
+                    <svg class="icon note-icon" aria-hidden="true"><use href="#icon-repeat"></use></svg>
+                    <div>
+                        <p>
+                            Las respuestas mantienen la <strong>conexión abierta</strong>:
+                            HTTP/1.1 usa <code>keep-alive</code> por defecto y reutiliza la
+                            misma conexión para los siguientes recursos.
+                        </p>
+                        <code>curl -sS -o /dev/null -o /dev/null \
+    -w '%{http_code} num_connects=%{num_connects}\n' \
+    http://127.0.0.1:8080/ http://127.0.0.1:8080/style.css</code>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -445,7 +486,7 @@
 <span class="accent">HTTP/1.1 200 OK</span>
 <span class="comment">Server: MiniHTTPd/1.0</span>
 <span class="comment">Content-Type: text/html; charset=utf-8</span>
-<span class="comment">Connection: close</span>
+<span class="comment">Connection: keep-alive</span>
 
 <span class="prompt">$</span> curl -sS http://127.0.0.1:8080/image.jpg -o /tmp/image.jpg
 <span class="prompt">$</span> sha256sum www/image.jpg /tmp/image.jpg
@@ -459,7 +500,7 @@
     <footer class="site-footer">
         <div class="container footer-inner">
             <p>MiniHTTPd · Proyecto Integrador de Computación Distribuida</p>
-            <p class="footer-meta">C · Linux · epoll · HTTP/1.1</p>
+            <p class="footer-meta">C · Linux · epoll · HTTP/1.1 · keep-alive</p>
         </div>
     </footer>
 </body>

@@ -42,7 +42,8 @@ typedef struct {
     files_file_t file;
     int file_open;
     int is_file_response;
-    int drain_after_write;
+    int keep_alive;
+    size_t requests_served;
     http_status_t status;
 
     time_t last_activity;
@@ -64,7 +65,10 @@ static int handle_readable(int epfd, connection_t *conn);
 static int handle_writable(int epfd, connection_t *conn);
 static int handle_draining(connection_t *conn);
 static int prepare_response(int epfd, connection_t *conn);
-static int prepare_error(int epfd, connection_t *conn, http_status_t status);
+static int prepare_error(int epfd, connection_t *conn, http_status_t status,
+                         int keep_alive);
+static int start_next_request(int epfd, connection_t *conn);
+static void reset_response_state(connection_t *conn);
 static int flush_connection(connection_t *conn);
 static void close_connection(int epfd, connection_t **table, size_t *count,
                              connection_t *conn);
@@ -367,7 +371,7 @@ static int handle_readable(int epfd, connection_t *conn)
             fflush(stdout);
 
             return prepare_error(epfd, conn,
-                                 HTTP_STATUS_BAD_REQUEST) == 0;
+                                 HTTP_STATUS_BAD_REQUEST, 0) == 0;
         }
 
         ssize_t received = recv(conn->fd,
@@ -396,7 +400,7 @@ static int handle_readable(int epfd, connection_t *conn)
             fflush(stdout);
 
             return prepare_error(epfd, conn,
-                                 HTTP_STATUS_BAD_REQUEST) == 0;
+                                 HTTP_STATUS_BAD_REQUEST, 0) == 0;
         }
 
         if (errno == EINTR) {
@@ -424,36 +428,110 @@ static int handle_writable(int epfd, connection_t *conn)
     }
 
     if (conn->is_file_response) {
-        printf("Archivo servido: %s (%s, %zu bytes)\n",
+        printf("Archivo servido: %s (%s, %zu bytes)%s\n",
                conn->file.path,
                mime_type_from_path(conn->file.path),
-               conn->file.size);
+               conn->file.size,
+               conn->keep_alive ? " [keep-alive]" : "");
     } else {
-        printf("Respuesta enviada -> %d\n", (int)conn->status);
+        printf("Respuesta enviada -> %d%s\n", (int)conn->status,
+               conn->keep_alive ? " [keep-alive]" : "");
     }
     fflush(stdout);
 
     /*
-     * Tras una respuesta de error el cliente puede seguir enviando datos
-     * (por ejemplo, el cuerpo de un POST o el resto de una solicitud
-     * demasiado grande). Se cierra el lado de escritura y se descartan
-     * esos datos para que el cierre no genere un RST que oculte la
-     * respuesta al cliente.
+     * Si la respuesta anuncio "Connection: keep-alive", la conexion se
+     * reutiliza: se descarta la solicitud ya atendida y se vuelve a leer.
+     * Si el cliente adelanto otra solicitud (pipelining), se procesa de
+     * inmediato sin esperar a que llegue mas informacion.
      */
-    if (conn->drain_after_write) {
-        if (shutdown(conn->fd, SHUT_WR) < 0 &&
-            errno != ENOTCONN) {
-            return 0;
+    if (conn->keep_alive) {
+        if (start_next_request(epfd, conn) != 0) {
+            return 1;
         }
-
-        conn->state = CONN_DRAINING;
-        conn->drain_deadline = time(NULL) + SERVER_DRAIN_TIMEOUT_SEC;
-
-        return modify_epoll(epfd, conn->fd,
-                            EPOLLIN | EPOLLRDHUP, conn) == 0;
     }
 
-    return 0;
+    /*
+     * Cierre ordenado: se cierra el lado de escritura y se descartan los
+     * datos pendientes (por ejemplo, el cuerpo de un POST o solicitudes
+     * adicionales ya encoladas). Asi el cierre no genera un RST que pueda
+     * ocultar la respuesta al cliente.
+     */
+    if (shutdown(conn->fd, SHUT_WR) < 0 && errno != ENOTCONN) {
+        return 0;
+    }
+
+    conn->state = CONN_DRAINING;
+    conn->drain_deadline = time(NULL) + SERVER_DRAIN_TIMEOUT_SEC;
+
+    return modify_epoll(epfd, conn->fd,
+                        EPOLLIN | EPOLLRDHUP, conn) == 0;
+}
+
+/*
+ * Prepara la conexion para atender la siguiente solicitud. Consume del
+ * buffer la solicitud recien respondida, conserva los bytes de solicitudes
+ * adelantadas y, si ya hay una completa, la procesa sin esperar a epoll.
+ * Retorna 1 si la conexion sigue utilizable y 0 si debe cerrarse.
+ */
+static int start_next_request(int epfd, connection_t *conn)
+{
+    if (conn->requests_served >= SERVER_MAX_REQUESTS_PER_CONNECTION) {
+        return 0;
+    }
+
+    const char *header_end = find_header_end(conn->in_buffer,
+                                             conn->in_length);
+    if (header_end == NULL) {
+        return 0;
+    }
+
+    size_t consumed = (size_t)(header_end - conn->in_buffer);
+    size_t remaining = conn->in_length - consumed;
+
+    if (remaining > 0) {
+        memmove(conn->in_buffer, header_end, remaining);
+    }
+
+    conn->in_length = remaining;
+    conn->in_buffer[remaining] = '\0';
+
+    reset_response_state(conn);
+    conn->state = CONN_READING;
+    conn->last_activity = time(NULL);
+
+    if (modify_epoll(epfd, conn->fd,
+                     EPOLLIN | EPOLLRDHUP, conn) != 0) {
+        return 0;
+    }
+
+    /*
+     * Pipelining: el cliente pudo enviar varias solicitudes en una sola
+     * escritura. Si la siguiente ya esta completa en el buffer, se
+     * responde ahora mismo.
+     */
+    if (conn->in_length > 0 &&
+        find_header_end(conn->in_buffer, conn->in_length) != NULL) {
+        if (prepare_response(epfd, conn) != 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static void reset_response_state(connection_t *conn)
+{
+    files_close(&conn->file);
+
+    conn->out_length = 0;
+    conn->out_sent = 0;
+    conn->file_length = 0;
+    conn->file_sent = 0;
+    conn->file_open = 0;
+    conn->is_file_response = 0;
+    conn->keep_alive = 0;
+    conn->status = HTTP_STATUS_OK;
 }
 
 static int handle_draining(connection_t *conn)
@@ -500,18 +578,35 @@ static int prepare_response(int epfd, connection_t *conn)
         }
         fflush(stdout);
 
-        return prepare_error(epfd, conn, status);
+        /*
+         * Una solicitud mal formada o con un metodo no permitido obliga a
+         * cerrar: el cuerpo, si existe, no se ha consumido y la
+         * sincronizacion de la conexion ya no es confiable.
+         */
+        return prepare_error(epfd, conn, status, 0);
+    }
+
+    int keep_alive = http_request_wants_keep_alive(&request);
+
+    /*
+     * La ultima respuesta permitida anuncia el cierre para que el cliente
+     * no intente reutilizar la conexion.
+     */
+    if (keep_alive &&
+        conn->requests_served + 1 >= SERVER_MAX_REQUESTS_PER_CONNECTION) {
+        keep_alive = 0;
     }
 
     files_result_t result = files_open(request.uri, &conn->file);
     if (result != FILES_OK) {
         status = file_result_to_status(result);
 
-        printf("Solicitud: %s %s %s -> %d\n",
-               request.method, request.uri, request.version, (int)status);
+        printf("Solicitud: %s %s %s -> %d%s\n",
+               request.method, request.uri, request.version, (int)status,
+               keep_alive ? " [keep-alive]" : "");
         fflush(stdout);
 
-        return prepare_error(epfd, conn, status);
+        return prepare_error(epfd, conn, status, keep_alive);
     }
 
     const char *content_type = mime_type_from_path(conn->file.path);
@@ -522,18 +617,21 @@ static int prepare_response(int epfd, connection_t *conn)
         HTTP_STATUS_OK,
         content_type,
         conn->file.size,
-        conn->file.modified);
+        conn->file.modified,
+        keep_alive);
 
     if (header_length < 0) {
         files_close(&conn->file);
 
-        printf("Solicitud: %s %s %s -> %d\n",
+        printf("Solicitud: %s %s %s -> %d%s\n",
                request.method, request.uri, request.version,
-               (int)HTTP_STATUS_INTERNAL_SERVER_ERROR);
+               (int)HTTP_STATUS_INTERNAL_SERVER_ERROR,
+               keep_alive ? " [keep-alive]" : "");
         fflush(stdout);
 
         return prepare_error(epfd, conn,
-                             HTTP_STATUS_INTERNAL_SERVER_ERROR);
+                             HTTP_STATUS_INTERNAL_SERVER_ERROR,
+                             keep_alive);
     }
 
     conn->file_open = 1;
@@ -542,35 +640,51 @@ static int prepare_response(int epfd, connection_t *conn)
     conn->out_length = (size_t)header_length;
     conn->out_sent = 0;
     conn->is_file_response = 1;
-    conn->drain_after_write = 0;
+    conn->keep_alive = keep_alive;
     conn->status = HTTP_STATUS_OK;
     conn->state = CONN_WRITING;
     conn->last_activity = time(NULL);
+    conn->requests_served++;
 
-    printf("Solicitud: %s %s %s -> %d\n",
+    printf("Solicitud: %s %s %s -> %d%s\n",
            request.method, request.uri, request.version,
-           (int)HTTP_STATUS_OK);
+           (int)HTTP_STATUS_OK,
+           keep_alive ? " [keep-alive]" : "");
     fflush(stdout);
 
     return modify_epoll(epfd, conn->fd, EPOLLOUT, conn);
 }
 
-static int prepare_error(int epfd, connection_t *conn, http_status_t status)
+static int prepare_error(int epfd, connection_t *conn, http_status_t status,
+                         int keep_alive)
 {
+    files_close(&conn->file);
+
     int length = http_build_error_response(conn->out_buffer,
                                            sizeof(conn->out_buffer),
-                                           status);
+                                           status, keep_alive);
 
-    conn->out_length = length > 0 ? (size_t)length : 0;
+    if (length <= 0) {
+        /*
+         * Si ni siquiera la pagina de error cabe, no hay respuesta que
+         * enviar: se cierra la conexion sin reutilizarla.
+         */
+        conn->out_length = 0;
+        keep_alive = 0;
+    } else {
+        conn->out_length = (size_t)length;
+    }
+
     conn->out_sent = 0;
     conn->file_open = 0;
     conn->file_length = 0;
     conn->file_sent = 0;
     conn->is_file_response = 0;
-    conn->drain_after_write = 1;
+    conn->keep_alive = keep_alive;
     conn->status = status;
     conn->state = CONN_WRITING;
     conn->last_activity = time(NULL);
+    conn->requests_served++;
 
     return modify_epoll(epfd, conn->fd, EPOLLOUT, conn);
 }
@@ -694,7 +808,20 @@ static void expire_connections(int epfd, connection_t **table, size_t *count)
             continue;
         }
 
-        if (now - conn->last_activity < SERVER_CLIENT_TIMEOUT_SEC) {
+        /*
+         * Una conexion persistente ociosa espera menos tiempo que una
+         * conexion que esta recibiendo o enviando datos.
+         */
+        time_t timeout = SERVER_CLIENT_TIMEOUT_SEC;
+        int idle_keep_alive = 0;
+
+        if (conn->state == CONN_READING && conn->in_length == 0 &&
+            conn->requests_served > 0) {
+            timeout = SERVER_KEEPALIVE_TIMEOUT_SEC;
+            idle_keep_alive = 1;
+        }
+
+        if (now - conn->last_activity < timeout) {
             i++;
             continue;
         }
@@ -710,15 +837,20 @@ static void expire_connections(int epfd, connection_t **table, size_t *count)
             fflush(stdout);
 
             if (prepare_error(epfd, conn,
-                              HTTP_STATUS_BAD_REQUEST) == 0) {
+                              HTTP_STATUS_BAD_REQUEST, 0) == 0) {
                 conn->last_activity = now;
                 i++;
                 continue;
             }
         }
 
-        printf("Conexion expirada: %s:%u\n",
-               conn->client_ip, (unsigned)conn->client_port);
+        if (idle_keep_alive) {
+            printf("Conexion persistente ociosa cerrada: %s:%u\n",
+                   conn->client_ip, (unsigned)conn->client_port);
+        } else {
+            printf("Conexion expirada: %s:%u\n",
+                   conn->client_ip, (unsigned)conn->client_port);
+        }
         fflush(stdout);
 
         close_connection(epfd, table, count, conn);

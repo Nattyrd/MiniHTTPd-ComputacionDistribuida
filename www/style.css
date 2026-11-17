@@ -828,6 +828,44 @@ strong {
     font-size: 0.82em;
 }
 
+/*
+ * Tarjeta destacada de la Fase 7. Ocupa toda la fila para cerrar la
+ * cuadricula de caracteristicas con la ultima fase del proyecto.
+ */
+.card-featured {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    column-gap: 20px;
+    row-gap: 10px;
+    padding: 28px 26px;
+    border-color: rgba(52, 211, 153, 0.28);
+    background:
+        radial-gradient(120% 180% at 100% 0%, rgba(52, 211, 153, 0.1), transparent 55%),
+        var(--surface);
+}
+
+.card-featured .card-icon {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+}
+
+.card-featured h3,
+.card-featured > p,
+.card-featured .tags {
+    grid-column: 2;
+}
+
+.card-featured h3 {
+    margin-top: 0;
+}
+
+.card-featured .tags {
+    margin-top: 0;
+    padding-top: 2px;
+}
+
 .tags {
     display: flex;
     flex-wrap: wrap;
@@ -1277,6 +1315,20 @@ strong {
 
     .btn {
         width: 100%;
+    }
+
+    .card-featured {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .card-featured .card-icon {
+        grid-row: auto;
+    }
+
+    .card-featured h3,
+    .card-featured > p,
+    .card-featured .tags {
+        grid-column: 1;
     }
 
     .terminal pre,
